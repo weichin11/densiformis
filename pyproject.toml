@@ -13,6 +13,11 @@ dependencies = [
     "tqdm (>=4.67.1,<5.0.0)"
 ]
 
+[project.optional-dependencies]
+examples = [
+    "scikit-learn (>=1.7.2,<2.0.0)", 
+    "matplotlib (>=3.10.7,<4.0.0)"
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
