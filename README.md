@@ -34,4 +34,4 @@ pip install -e .[examples]
 ![multi_grid.png](https://drive.google.com/thumbnail?id=1H-WdPFA6zUs5IHul_rg8OdK7ucaPv1Md&sz=w2560)
 
 ### [Text Generation](/examples/text_generation)
-![generated_text_generation.gif](https://drive.google.com/thumbnail?id=1YF_nv4SkIvdJbhlrJuCd28iybTJFS2Tq&sz=w2560)
+![generated_text_generation.gif](https://drive.google.com/thumbnail?id=1O5nFE2MVAtAHLwLEbpQOdgFBXvcPpG5O&sz=w2560)
