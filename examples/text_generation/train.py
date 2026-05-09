@@ -29,36 +29,12 @@ def read_corpus(path: Path = DEFAULT_DATA_PATH) -> List[str]:
     ]
 
 
-def int_to_bits(value: int, bits: int) -> List[int]:
-    return [(value >> shift) & 1 for shift in range(bits - 1, -1, -1)]
-
-
-def bits_to_int(bit_tensor: torch.Tensor) -> int:
-    value = 0
-    for bit in bit_tensor.long().tolist():
-        value = (value << 1) | int(bit)
-    return value
-
-
-def binary_to_gray(value: int) -> int:
-    return value ^ (value >> 1)
-
-
-def gray_to_binary(value: int) -> int:
-    result = value
-    while value >> 1:
-        value >>= 1
-        result ^= value
-    return result
-
-
 class SimpleBPETokenizer:
     def __init__(self, vocab_size: int = 128):
         self.vocab_size = vocab_size
         self.merges: List[tuple[str, str]] = []
         self.token_to_ordered_id: dict[str, int] = {}
         self.ordered_id_to_token: list[str] = []
-        self.bits = 1
 
     def fit(self, texts: Iterable[str]) -> None:
         words = []
@@ -99,7 +75,6 @@ class SimpleBPETokenizer:
         ordered_tokens = [PAD_TOKEN, EOS_TOKEN, UNK_TOKEN] + sorted(vocab - {PAD_TOKEN, EOS_TOKEN, UNK_TOKEN})
         self.ordered_id_to_token = ordered_tokens
         self.token_to_ordered_id = {token: index for index, token in enumerate(ordered_tokens)}
-        self.bits = max(1, (len(ordered_tokens) - 1).bit_length())
 
     def encode(self, text: str, seq_len: int) -> list[int]:
         token_ids = self.tokenize(text)
@@ -151,33 +126,26 @@ class SimpleBPETokenizer:
         return tuple(merged)
 
 
-def token_ids_to_gray_bits(token_ids: Iterable[int], bits: int) -> torch.Tensor:
-    encoded = [int_to_bits(binary_to_gray(token_id), bits) for token_id in token_ids]
-    return torch.tensor(encoded, dtype=torch.float32)
+def token_ids_to_one_hot(token_ids: Iterable[int], vocab_size: int) -> torch.Tensor:
+    token_tensor = torch.tensor(list(token_ids), dtype=torch.long)
+    return F.one_hot(token_tensor, num_classes=vocab_size).float().permute(1, 0)
 
 
-def gray_bits_to_token_ids(bit_tensor: torch.Tensor, vocab_size: int, threshold: float = 0.5) -> list[int]:
-    bit_tensor = (bit_tensor.detach().cpu() > threshold).long()
-    token_ids = []
-    for token_bits in bit_tensor:
-        gray_value = bits_to_int(token_bits)
-        token_id = gray_to_binary(gray_value)
-        if token_id >= vocab_size:
-            token_id = 2
-        token_ids.append(token_id)
-    return token_ids
+def categorical_to_token_ids(token_tensor: torch.Tensor) -> list[int]:
+    return token_tensor.detach().cpu().argmax(dim=0).long().tolist()
 
 
-def gray_bits_to_text(bit_tensor: torch.Tensor, tokenizer: SimpleBPETokenizer) -> str:
-    return tokenizer.decode(gray_bits_to_token_ids(bit_tensor, len(tokenizer.ordered_id_to_token)))
+def categorical_to_text(token_tensor: torch.Tensor, tokenizer: SimpleBPETokenizer) -> str:
+    return tokenizer.decode(categorical_to_token_ids(token_tensor))
 
 
 class BPETextDataset(Dataset):
     def __init__(self, texts: Iterable[str], tokenizer: SimpleBPETokenizer, seq_len: int):
         self.texts = list(texts)
+        vocab_size = len(tokenizer.ordered_id_to_token)
         self.samples = torch.stack(
             [
-                token_ids_to_gray_bits(tokenizer.encode(text, seq_len), tokenizer.bits)
+                token_ids_to_one_hot(tokenizer.encode(text, seq_len), vocab_size)
                 for text in self.texts
             ]
         )
@@ -227,38 +195,38 @@ class ResidualConvBlock(nn.Module):
         return x + residual
 
 
-class TextBitDenoiser(nn.Module):
+class TextCategoricalDenoiser(nn.Module):
     def __init__(
         self,
         seq_len: int,
-        bits: int,
+        vocab_size: int,
         hidden_dim: int = 512,
         layers: int = 8,
         kernel_size: int = 17,
     ):
         super().__init__()
         self.seq_len = seq_len
-        self.bits = bits
+        self.vocab_size = vocab_size
 
-        self.in_conv = nn.Conv1d(bits + 1, hidden_dim, kernel_size=kernel_size, padding=kernel_size // 2)
+        self.in_conv = nn.Conv1d(vocab_size + 1, hidden_dim, kernel_size=kernel_size, padding=kernel_size // 2)
         self.blocks = nn.ModuleList(
             [ResidualConvBlock(hidden_dim, kernel_size=kernel_size) for _ in range(layers)]
         )
         self.out_norm = nn.GroupNorm(group_count(hidden_dim), hidden_dim)
-        self.out_conv = nn.Conv1d(hidden_dim, bits, kernel_size=kernel_size, padding=kernel_size // 2)
+        self.out_conv = nn.Conv1d(hidden_dim, vocab_size, kernel_size=kernel_size, padding=kernel_size // 2)
 
     def forward(self, inputs: List[torch.Tensor], t: List[torch.Tensor]) -> List[torch.Tensor]:
-        (text_bits,) = inputs
+        (token_probs,) = inputs
         (text_t,) = t
-        time_channel = text_t.view(-1, 1, 1).expand(-1, self.seq_len, 1)
-        y = torch.cat([text_bits, time_channel], dim=-1).permute(0, 2, 1)
+        time_channel = text_t.view(-1, 1, 1).expand(-1, 1, self.seq_len)
+        y = torch.cat([token_probs, time_channel], dim=1)
         y = self.in_conv(y)
         for block in self.blocks:
             y = block(y)
         y = self.out_norm(y)
         y = F.silu(y)
         y = self.out_conv(y)
-        return [y.permute(0, 2, 1)]
+        return [y]
 
 
 def prepare_tokenizer(texts: List[str], vocab_size: int, valid_fraction: float, seed: int):
@@ -274,7 +242,7 @@ def save_config(
     *,
     corpus_size: int,
     seq_len: int,
-    bits: int,
+    token_count: int,
     vocab_size: int,
     hidden_dim: int,
     layers: int,
@@ -286,7 +254,7 @@ def save_config(
     config = {
         "corpus_size": corpus_size,
         "seq_len": seq_len,
-        "bits": bits,
+        "token_count": token_count,
         "vocab_size": vocab_size,
         "hidden_dim": hidden_dim,
         "layers": layers,
@@ -298,7 +266,7 @@ def save_config(
 
 
 def main():
-    parser = ArgumentParser(description="Train a binary BPE/Gray-code diffusion model for tiny text generation.")
+    parser = ArgumentParser(description="Train a categorical BPE diffusion model for tiny text generation.")
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA_PATH)
     parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -326,15 +294,16 @@ def main():
     train_dataset = BPETextDataset(train_texts, tokenizer, seq_len)
     valid_dataset = BPETextDataset(valid_texts, tokenizer, seq_len)
 
-    print(f"BPE vocabulary size: {len(tokenizer.ordered_id_to_token)} tokens")
-    print(f"Encoding each BPE token id with {tokenizer.bits} Gray-code bits")
+    token_count = len(tokenizer.ordered_id_to_token)
+    print(f"BPE vocabulary size: {token_count} tokens")
+    print(f"Encoding each BPE token id as a {token_count}-class categorical distribution")
     print(f"Fixed token sequence length: {seq_len}")
     print(f"Corpus size: {len(corpus)} sentences")
     print(f"Training split: {len(train_dataset)} train, {len(valid_dataset)} validation")
 
-    model = TextBitDenoiser(
+    model = TextCategoricalDenoiser(
         seq_len=seq_len,
-        bits=tokenizer.bits,
+        vocab_size=token_count,
         hidden_dim=args.hidden_dim,
         layers=args.layers,
         kernel_size=args.kernel_size,
@@ -343,7 +312,7 @@ def main():
 
     densiformis.diffuser.fit(
         model=model,
-        distribution_types=["binary"],
+        distribution_types=["categorical"],
         train_dataset=train_dataset,
         valid_dataset=valid_dataset,
         optimizer=optimizer,
@@ -361,7 +330,7 @@ def main():
         args.checkpoint_save_root,
         corpus_size=len(corpus),
         seq_len=seq_len,
-        bits=tokenizer.bits,
+        token_count=token_count,
         vocab_size=args.vocab_size,
         hidden_dim=args.hidden_dim,
         layers=args.layers,
