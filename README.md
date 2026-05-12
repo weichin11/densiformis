@@ -35,3 +35,7 @@ pip install -e .[examples]
 
 ### [Text Generation](/examples/text_generation)
 ![generated_text_generation.gif](https://drive.google.com/thumbnail?id=1O5nFE2MVAtAHLwLEbpQOdgFBXvcPpG5O&sz=w2560)
+
+
+### [Text Translation](/examples/text_translation)
+![generated_text_translation_train.gif](https://drive.google.com/thumbnail?id=1cgaK5e5zOvCn_hBkoeH91aHWYRKpeNER&sz=w2560)
