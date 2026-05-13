@@ -33,6 +33,9 @@ pip install -e .[examples]
 ### [Multi-classification](/examples/toy_samples) — 2D points + 3 categorical label
 ![multi_grid.png](https://drive.google.com/thumbnail?id=1H-WdPFA6zUs5IHul_rg8OdK7ucaPv1Md&sz=w2560)
 
+### [Image Generation](/examples/image_generation) - CelebA Mask-HQ: face images + segmentation masks
+![celeb_a_mask_hq_grid.png](https://drive.google.com/thumbnail?id=1f19zch_dfRViV703z2Z1tyPD1-ZybyzH&sz=w2560)
+
 ### [Text Generation](/examples/text_generation)
 ![generated_text_generation.gif](https://drive.google.com/thumbnail?id=1O5nFE2MVAtAHLwLEbpQOdgFBXvcPpG5O&sz=w2560)
 
