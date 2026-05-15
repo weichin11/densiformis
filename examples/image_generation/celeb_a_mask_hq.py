@@ -381,18 +381,18 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load("./model.pt", map_location=device, weights_only=True))
     optimizer.load_state_dict(torch.load("./optimizer.pt", map_location=device, weights_only=True))
 
-    # densiformis.diffuser.fit(
-    #     model=model,
-    #     distribution_types=distribution_types,
-    #     train_dataset=train_dataset,
-    #     valid_dataset=valid_dataset,
-    #     optimizer=optimizer,
-    #     epochs=500,
-    #     batch_size=32,
-    #     checkpoint_save_root="./",
-    #     save_period=1,
-    #     device=device
-    # )
+    densiformis.diffuser.fit(
+        model=model,
+        distribution_types=distribution_types,
+        train_dataset=train_dataset,
+        valid_dataset=valid_dataset,
+        optimizer=optimizer,
+        epochs=500,
+        batch_size=32,
+        checkpoint_save_root="./",
+        save_period=1,
+        device=device
+    )
 
     sample_count = 4
     samples = [valid_dataset[index] for index in range(min(sample_count, len(valid_dataset)))]

@@ -32,8 +32,6 @@ The script loads checkpoints from the repository root:
 - `model.pt`
 - `optimizer.pt`
 
-To train instead of only generating from an existing checkpoint, uncomment the `densiformis.diffuser.fit(...)` block in `celeb_a_mask_hq.py`.
-
 Output:
 
 - `celeb_a_mask_hq_grid.png`: Denoising progress for generating both image and mask, generating images with masks fixed, and generating masks with images fixed.
