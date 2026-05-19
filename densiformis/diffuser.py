@@ -35,6 +35,7 @@ def fit(
         train_bar = tqdm.tqdm(train_loader, total = len(train_loader), ncols = 0, leave = False, disable = not verbose)
         for batch_x in train_bar:
             batch_x, batch_y, batch_t = _random_interpolation(batch_x, distribution_behaviors, device)
+            batch_x = [torch.nan_to_num(x) for x in batch_x]
             pred_y = model(batch_x,batch_t)
             loss = _get_batch_loss(batch_y,pred_y,distribution_behaviors)
             
@@ -52,6 +53,7 @@ def fit(
         valid_bar = tqdm.tqdm(valid_loader, total = len(valid_loader), ncols = 0, leave = False, disable = not verbose)
         for batch_x in valid_bar:
             batch_x, batch_y, batch_t = _random_interpolation(batch_x, distribution_behaviors, device)
+            batch_x = [torch.nan_to_num(x) for x in batch_x]
             pred_y = model(batch_x,batch_t)
             loss = _get_batch_loss(batch_y,pred_y,distribution_behaviors)
             batch_valid_loss.extend(list(loss.detach().cpu().numpy().flatten()))
@@ -84,10 +86,13 @@ def sample(
 
     model.eval()
     xt_list = [i.to(device) for i in inputs]
+    xt_nan_masks = [torch.isnan(x) for x in xt_list]
     with torch.no_grad():
         for s in range(steps):
             t_list = (s / steps) * torch.ones((len(inputs), batch_size), device=device, dtype=torch.float32)
             t_list = list(torch.split(t_list,1,dim=0))
+
+            xt_list = [torch.where(m, torch.zeros_like(x), x) for x, m in zip(xt_list, xt_nan_masks)]
 
             if direction == 'forward':
                 t_list = [ti + (1.0 - ti) * t for ti, t in zip(t_init, t_list)]
@@ -98,7 +103,7 @@ def sample(
                 pred_diff = model(xt_list, t_list)
                 xt_list = [xt - ti * (1.0 / steps) * behavior.output_activation(y) for xt, y, behavior, ti in zip(xt_list, pred_diff, distribution_behaviors, t_init)]
             
-            yield xt_list
+            yield [torch.where(m, torch.full_like(x, torch.nan), x) for x, m in zip(xt_list, xt_nan_masks)]
 
 def _random_interpolation(x0: List[torch.Tensor], distribution_behaviors:List[BaseDistributionBehavior], device) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
     batch_size = x0[0].size()[0]
@@ -119,5 +124,17 @@ def _random_interpolation(x0: List[torch.Tensor], distribution_behaviors:List[Ba
     return xt, diff, t_list
 
 def _get_batch_loss(y_true:List[torch.Tensor], y_pred:List[torch.Tensor], distribution_behaviors:List[BaseDistributionBehavior]) -> torch.Tensor:
-    losses = [behavior.loss(y_t, y_p).mean(dim=list(range(1, len(y_t.size())))) for y_t, y_p, behavior in zip(y_true, y_pred, distribution_behaviors)]
-    return torch.sum(torch.stack(losses,dim=1),dim=1)
+
+    losses = []
+
+    for yt, yp, behavior in zip(y_true, y_pred, distribution_behaviors):
+
+        nan_mask = torch.isnan(yt)
+        yt_safe = torch.where(nan_mask, torch.zeros_like(yt).detach(), yt)
+        yp_safe = torch.where(nan_mask, torch.zeros_like(yp).detach(), yp)
+
+        mean_dim = tuple(range(1, yt.ndim))
+        loss = (~nan_mask * behavior.loss(yt_safe, yp_safe)).sum(mean_dim) / ((~nan_mask).sum(mean_dim)+1e-8)
+        losses.append(loss)
+
+    return torch.sum(torch.stack(losses, dim=1), dim=1)
