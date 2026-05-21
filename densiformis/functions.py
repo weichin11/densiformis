@@ -2,7 +2,8 @@ import torch
 from torch.nn.functional import softplus
 
 def log_cosh(y_true:torch.Tensor,y_pred:torch.Tensor):
-    return (y_pred-y_true).cosh().log()
+    error = y_pred - y_true
+    return error + softplus(-2.0 * error) - torch.log(torch.tensor(2.0, device=error.device, dtype=error.dtype))
 
 def rand_soft_label(size, dim=1, device="cpu"):
     p = torch.rand(size, dtype=torch.float32,device=device)
