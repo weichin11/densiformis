@@ -1,14 +1,37 @@
 # Image Generation
 
-![celeb_a_mask_hq_grid.png](https://drive.google.com/thumbnail?id=1f19zch_dfRViV703z2Z1tyPD1-ZybyzH&sz=w2560)
+These examples show how Densiformis handles image-like tensors together with structured visual conditions. Start with `mnist.py` for a small image/class-label example, then move to `celeb_a_mask_hq.py` for paired face images and semantic segmentation masks.
 
-These examples show how Densiformis handles image-like tensors together with structured visual conditions. The CelebA Mask-HQ example models a face image as a numerical distribution and its semantic segmentation mask as a binary distribution, then samples under several conditioning modes.
+## MNIST
 
-Files:
+![mnist](https://drive.google.com/thumbnail?id=1WMWjLDAu3X39tue-I3v-d6yDS7bxpqJo&sz=w2560)
 
-- `celeb_a_mask_hq.py`: Loads CelebA Mask-HQ images and masks from a zip archive, defines a U-Net denoiser, and writes a grid of generated image/mask samples.
+`mnist.py` models each handwritten digit image as a numerical distribution and its class label as a categorical distribution. The generated video shows three conditioning modes:
 
-## Data
+- Generate both images and labels from noise.
+- Generate images while keeping labels fixed.
+- Generate labels while keeping images fixed.
+
+Data is downloaded automatically by torchvision into `data/`.
+
+Run:
+
+```bash
+python examples/image_generation/mnist.py
+```
+
+Output:
+- `mnist_grid.mp4`: Denoising progress for image and label generation.
+
+## CelebA Mask-HQ
+
+![celeb_a_mask_hq_grid](https://drive.google.com/thumbnail?id=1CcalriiXwWQgynhzOzlcKBCEbgsvMQ95&sz=w2560)
+
+`celeb_a_mask_hq.py` models a face image as a numerical distribution and its semantic segmentation mask as a binary distribution. The generated video shows three conditioning modes:
+
+- Generate both images and masks from noise.
+- Generate images while keeping masks fixed.
+- Generate masks while keeping images fixed.
 
 Download [CelebA Mask-HQ](https://drive.google.com/file/d/1badu11NqxGf6qM3PTTooQDJvQbejgbTv/view) and place the archive here:
 
@@ -21,17 +44,12 @@ The script expects the zip archive to contain:
 - `CelebAMask-HQ/CelebA-HQ-img/`
 - `CelebAMask-HQ/CelebAMask-HQ-mask-anno/`
 
-## Run
+Run:
 
 ```bash
 python examples/image_generation/celeb_a_mask_hq.py
 ```
 
-The script loads checkpoints from the repository root:
-
-- `model.pt`
-- `optimizer.pt`
-
 Output:
 
-- `celeb_a_mask_hq_grid.png`: Denoising progress for generating both image and mask, generating images with masks fixed, and generating masks with images fixed.
+- `celeb_a_mask_hq_grid.mp4`: Denoising progress for image and mask generation.

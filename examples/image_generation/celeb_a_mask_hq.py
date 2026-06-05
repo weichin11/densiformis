@@ -1,11 +1,11 @@
+import os
 from io import BytesIO
+from pathlib import Path
 from typing import List, Sequence
 import zipfile
 import numpy as np
 import tqdm
 from PIL import Image
-
-import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 
 import torch
@@ -251,23 +251,22 @@ def _mask_to_rgb(mask: torch.Tensor) -> np.ndarray:
 def _make_celeb_panel(
     images: torch.Tensor,
     masks: torch.Tensor,
-    nrow: int = 2,
-    max_images: int = 4,
+    sample_rows: int = 4,
+    sample_cols: int = 2,
 ) -> np.ndarray:
     images = images.detach().cpu()
     masks = masks.detach().cpu()
-    tile_count = min(max_images, images.size(0))
-    nrows = int(np.ceil(tile_count / nrow))
+    tile_count = min(sample_rows * sample_cols, images.size(0), masks.size(0))
 
     image_h, image_w = images.shape[-2:]
     pad = 4
     tile_w = image_w * 2 + pad
-    canvas_h = nrows * image_h + (nrows - 1) * pad
-    canvas_w = nrow * tile_w + (nrow - 1) * pad
+    canvas_h = sample_rows * image_h + (sample_rows - 1) * pad
+    canvas_w = sample_cols * tile_w + (sample_cols - 1) * pad
     canvas = np.ones((canvas_h, canvas_w, 3), dtype=np.float32)
 
     for idx in range(tile_count):
-        row, col = divmod(idx, nrow)
+        row, col = divmod(idx, sample_cols)
         y0 = row * (image_h + pad)
         x0 = col * (tile_w + pad)
 
@@ -285,39 +284,60 @@ def make_grid(
     image_noise: torch.Tensor,
     mask_noise: torch.Tensor,
     device: str,
-    time_slices: int = 5,
-    steps: int = 100,
-    save_path: str = "celeb_a_mask_hq_grid.png",
+    steps: int = 48,
+    save_path: str = "celeb_a_mask_hq_grid.gif",
+    fps: int = 24,
+    sample_rows: int = 4,
+    sample_cols: int = 2,
 ):
-    snapshot_steps = np.linspace(0, steps, time_slices, dtype=int)
-    step_labels = [f"{int(round(s / steps * 100))}%" for s in snapshot_steps]
+    if sample_rows < 1 or sample_cols < 1:
+        raise ValueError("sample_rows and sample_cols must be positive")
+
+    sample_count = min(
+        sample_rows * sample_cols,
+        images.size(0),
+        masks.size(0),
+        image_noise.size(0),
+        mask_noise.size(0),
+    )
+    if sample_count < 1:
+        raise ValueError("make_grid needs at least one sample")
+
+    images = images[:sample_count]
+    masks = masks[:sample_count]
+    image_noise = image_noise[:sample_count]
+    mask_noise = mask_noise[:sample_count]
 
     conditions = [
         {
-            "name": "Denoise both",
+            "name": "Generate both",
             "inputs": [image_noise, mask_noise],
             "t_init": [1.0, 1.0],
         },
         {
-            "name": "Denoise images\n(masks fixed)",
+            "name": "Generate images only",
             "inputs": [image_noise, masks],
             "t_init": [1.0, 0.0],
         },
         {
-            "name": "Denoise masks\n(images fixed)",
+            "name": "Generate masks only",
             "inputs": [images, mask_noise],
             "t_init": [0.0, 1.0],
         },
     ]
 
-    fig, axes = plt.subplots(
-        len(conditions),
-        time_slices,
-        figsize=(time_slices * 2.7, len(conditions) * 1.55),
-    )
+    save_path = Path(save_path)
+    output_suffix = save_path.suffix.lower()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    for row, cond in enumerate(conditions):
-        snapshots = [[tensor.detach().cpu() for tensor in cond["inputs"]]]
+    if output_suffix not in {".gif", ".mp4"}:
+        raise ValueError("save_path must end with .gif or .mp4")
+
+    import matplotlib.animation as animation
+
+    condition_frames = []
+    for cond in conditions:
+        frames = [[tensor.detach().cpu() for tensor in cond["inputs"]]]
         sampler = densiformis.diffuser.sample(
             model=model,
             distribution_types=distribution_types,
@@ -327,36 +347,58 @@ def make_grid(
             direction="backward",
             device=device,
         )
-        target_steps = list(snapshot_steps[1:])
-        target_index = 0
-        last_xt = None
 
-        for step_idx, xt in enumerate(sampler, start=1):
-            last_xt = xt
-            if target_index < len(target_steps) and step_idx >= target_steps[target_index]:
-                snapshots.append([tensor.detach().cpu() for tensor in xt])
-                target_index += 1
-            if target_index >= len(target_steps):
-                break
+        for xt in sampler:
+            frames.append([tensor.detach().cpu() for tensor in xt])
 
-        if len(snapshots) < len(snapshot_steps) and last_xt is not None:
-            snapshots.append([tensor.detach().cpu() for tensor in last_xt])
+        while len(frames) < steps + 1:
+            frames.append([tensor.clone() for tensor in frames[-1]])
 
-        while len(snapshots) < len(snapshot_steps):
-            snapshots.append([tensor.clone() for tensor in snapshots[-1]])
+        condition_frames.append(frames[: steps + 1])
 
-        for col, (image_frame, mask_frame) in enumerate(snapshots[:time_slices]):
-            ax = axes[row, col]
-            ax.imshow(_make_celeb_panel(image_frame, mask_frame))
-            ax.set_xticks([])
-            ax.set_yticks([])
-            if row == 0:
-                ax.set_title(f"{step_labels[col]} of diffusion")
-            if col == 0:
-                ax.set_ylabel(cond["name"])
+    frame_count = min(len(frames) for frames in condition_frames)
+    fig, axes = plt.subplots(
+        1,
+        len(conditions),
+        figsize=(8, 4.5),
+    )
+    axes = np.atleast_1d(axes)
+    artists = []
 
-    fig.tight_layout(pad=0.2, w_pad=0.15, h_pad=0.05)
-    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    for col, cond in enumerate(conditions):
+        image_frame, mask_frame = condition_frames[col][0]
+        artist = axes[col].imshow(
+            _make_celeb_panel(image_frame, mask_frame, sample_rows, sample_cols),
+            animated=True,
+        )
+        axes[col].set_xticks([])
+        axes[col].set_yticks([])
+        axes[col].set_xlabel(cond["name"], fontsize=7, labelpad=4)
+        artists.append(artist)
+
+    title = fig.suptitle("0% of diffusion", fontsize=9)
+    fig.tight_layout(rect=(0, 0.06, 1, 0.94), w_pad=0.35)
+
+    def update(frame_index: int):
+        for col, artist in enumerate(artists):
+            image_frame, mask_frame = condition_frames[col][frame_index]
+            artist.set_data(_make_celeb_panel(image_frame, mask_frame, sample_rows, sample_cols))
+        progress = int(round(frame_index / max(1, frame_count - 1) * 100))
+        title.set_text(f"{progress}% of diffusion")
+        return (*artists, title)
+
+    ani = animation.FuncAnimation(
+        fig,
+        update,
+        frames=frame_count,
+        interval=int(1000 / max(1, fps)),
+        blit=False,
+    )
+    if output_suffix == ".gif":
+        writer = animation.PillowWriter(fps=fps)
+    else:
+        writer = animation.FFMpegWriter(fps=fps)
+    ani.save(save_path, writer=writer, dpi=200)
     plt.close(fig)
 
 if __name__ == "__main__":
@@ -378,9 +420,6 @@ if __name__ == "__main__":
     valid_dataset = Subset(full_dataset, valid_indices)
 
 
-    model.load_state_dict(torch.load("./model.pt", map_location=device, weights_only=True))
-    optimizer.load_state_dict(torch.load("./optimizer.pt", map_location=device, weights_only=True))
-
     densiformis.diffuser.fit(
         model=model,
         distribution_types=distribution_types,
@@ -389,13 +428,14 @@ if __name__ == "__main__":
         optimizer=optimizer,
         epochs=500,
         batch_size=32,
-        checkpoint_save_root="./",
+        checkpoint_save_root="./celeb_a_mask_hq_checkpoints",
         save_period=1,
         device=device
     )
 
-    sample_count = 4
-    samples = [valid_dataset[index] for index in range(min(sample_count, len(valid_dataset)))]
+    sample_rows = 5
+    sample_cols = 2
+    samples = [valid_dataset[index] for index in range(min(sample_rows * sample_cols, len(valid_dataset)))]
     images = torch.stack([sample[0] for sample in samples])
     masks = torch.stack([sample[1] for sample in samples])
     image_noise = torch.randn_like(images)
@@ -409,6 +449,8 @@ if __name__ == "__main__":
         image_noise=image_noise,
         mask_noise=mask_noise,
         device=device,
-        save_path="celeb_a_mask_hq_grid.png",
+        save_path="celeb_a_mask_hq_grid.mp4",
+        sample_rows=sample_rows,
+        sample_cols=sample_cols,
     )
-    print("Artifact saved: celeb_a_mask_hq_grid.png")
+    print("Artifact saved: celeb_a_mask_hq_grid.mp4")
