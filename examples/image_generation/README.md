@@ -4,7 +4,7 @@ These examples show how Densiformis handles image-like tensors together with str
 
 ## MNIST
 
-![mnist](https://drive.google.com/thumbnail?id=1WMWjLDAu3X39tue-I3v-d6yDS7bxpqJo&sz=w2560)
+![mnist](https://drive.google.com/thumbnail?id=12h528Hr4VgH2l09b0BLHnuSMBKAz3mcq&sz=w960)
 
 `mnist.py` models each handwritten digit image as a numerical distribution and its class label as a categorical distribution. The generated video shows three conditioning modes:
 
@@ -25,7 +25,7 @@ Output:
 
 ## CelebA Mask-HQ
 
-![celeb_a_mask_hq_grid](https://drive.google.com/thumbnail?id=1CcalriiXwWQgynhzOzlcKBCEbgsvMQ95&sz=w2560)
+![celeb_a_mask_hq_grid](https://drive.google.com/thumbnail?id=1RrwzBVu7eX3WKWbl4OPNIl8v0JCL3qWy&sz=w960)
 
 `celeb_a_mask_hq.py` models a face image as a numerical distribution and its semantic segmentation mask as a binary distribution. The generated video shows three conditioning modes:
 

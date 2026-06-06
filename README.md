@@ -1,18 +1,10 @@
 # Densiformis
 
-A lightweight toolkit for training multimodal and conditional generative diffusion models across mixed data types (numerical, binary, categorical).
+Densiformis is a multimodal generative framework for learning both continuous and discrete data distributions using diffusion models.
 
 ## Installation
 
-### 1. Create and activate an environment
-
-```bash
-conda create -n densiformis python=3.12
-conda deactivate
-conda activate densiformis
-```
-
-### 2. Clone and install
+### Clone and install
 
 ```bash
 git clone https://github.com/weichin11/densiformis.git
@@ -20,7 +12,7 @@ cd densiformis
 pip install -e .
 ```
 
-### 3. Install example extras
+### Install example extras
 
 ```bash
 pip install -e .[examples]
