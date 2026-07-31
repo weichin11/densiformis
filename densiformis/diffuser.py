@@ -2,6 +2,7 @@ import os
 import torch
 from torch.nn import Module
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import Dataset, DataLoader
 from typing import Tuple, List, Iterator, Optional
 import tqdm
@@ -19,9 +20,15 @@ def fit(
     save_period:int = 1,
     device:str = "cpu",
     verbose:bool = True,
+    scheduler:Optional[LRScheduler] = None,
+    loss_weights:Optional[List[float]] = None,
 ) -> None:
     
     distribution_behaviors = [get_distribution_behavior(dt) for dt in distribution_types]
+    if loss_weights is None:
+        loss_weights = [1.0] * len(distribution_behaviors)
+    if len(loss_weights) != len(distribution_behaviors):
+        raise ValueError("loss_weights must have the same length as distribution_types")
     epoch_train_loss = []
     epoch_valid_loss = []
 
@@ -37,7 +44,7 @@ def fit(
             batch_x, batch_y, batch_t = _random_interpolation(batch_x, distribution_behaviors, device)
             batch_x = [torch.nan_to_num(x) for x in batch_x]
             pred_y = model(batch_x,batch_t)
-            loss = _get_batch_loss(batch_y,pred_y,distribution_behaviors)
+            loss = _get_batch_loss(batch_y,pred_y,distribution_behaviors,loss_weights)
             
             optimizer.zero_grad()
             loss.mean().backward()
@@ -55,12 +62,17 @@ def fit(
             batch_x, batch_y, batch_t = _random_interpolation(batch_x, distribution_behaviors, device)
             batch_x = [torch.nan_to_num(x) for x in batch_x]
             pred_y = model(batch_x,batch_t)
-            loss = _get_batch_loss(batch_y,pred_y,distribution_behaviors)
+            loss = _get_batch_loss(batch_y,pred_y,distribution_behaviors,loss_weights)
             batch_valid_loss.extend(list(loss.detach().cpu().numpy().flatten()))
             valid_bar.set_description(f"Validating: valid_loss={sum(batch_valid_loss)/len(batch_valid_loss):.4f}")
 
         epoch_valid_loss.append(sum(batch_valid_loss)/len(batch_valid_loss))
-        epoch_bar.set_description(f"Epoch: train_loss={epoch_train_loss[-1]:.4f}, valid_loss={epoch_valid_loss[-1]:.4f}")
+
+        if scheduler is not None:
+            epoch_bar.set_description(f"Epoch: train_loss={epoch_train_loss[-1]:.4f}, valid_loss={epoch_valid_loss[-1]:.4f}, lr={optimizer.param_groups[0]["lr"]:.2e}")
+            scheduler.step()
+        else:
+            epoch_bar.set_description(f"Epoch: train_loss={epoch_train_loss[-1]:.4f}, valid_loss={epoch_valid_loss[-1]:.4f}")
 
         if e % save_period == save_period - 1 and checkpoint_save_root is not None:
             if not os.path.exists(checkpoint_save_root):
@@ -105,7 +117,12 @@ def sample(
             
             yield [torch.where(m, torch.full_like(x, torch.nan), x) for x, m in zip(xt_list, xt_nan_masks)]
 
-def _random_interpolation(x0: List[torch.Tensor], distribution_behaviors:List[BaseDistributionBehavior], device) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
+def _random_interpolation(
+    x0: List[torch.Tensor], 
+    distribution_behaviors:List[BaseDistributionBehavior], 
+    device
+) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
+
     batch_size = x0[0].size()[0]
     assert all([batch_size == i.size()[0] for i in x0]), "All inputs must have the same batch size"
     
@@ -123,11 +140,20 @@ def _random_interpolation(x0: List[torch.Tensor], distribution_behaviors:List[Ba
 
     return xt, diff, t_list
 
-def _get_batch_loss(y_true:List[torch.Tensor], y_pred:List[torch.Tensor], distribution_behaviors:List[BaseDistributionBehavior]) -> torch.Tensor:
+def _get_batch_loss(
+    y_true:List[torch.Tensor],
+    y_pred:List[torch.Tensor],
+    distribution_behaviors:List[BaseDistributionBehavior],
+    loss_weights:Optional[List[float]] = None,
+) -> torch.Tensor:
 
     losses = []
+    if loss_weights is None:
+        loss_weights = [1.0] * len(distribution_behaviors)
+    if len(loss_weights) != len(distribution_behaviors):
+        raise ValueError("loss_weights must have the same length as distribution_behaviors")
 
-    for yt, yp, behavior in zip(y_true, y_pred, distribution_behaviors):
+    for yt, yp, behavior, weight in zip(y_true, y_pred, distribution_behaviors, loss_weights):
 
         nan_mask = torch.isnan(yt)
         yt_safe = torch.where(nan_mask, torch.zeros_like(yt).detach(), yt)
@@ -135,6 +161,6 @@ def _get_batch_loss(y_true:List[torch.Tensor], y_pred:List[torch.Tensor], distri
 
         mean_dim = tuple(range(1, yt.ndim))
         loss = (~nan_mask * behavior.loss(yt_safe, yp_safe)).sum(mean_dim) / ((~nan_mask).sum(mean_dim)+1e-8)
-        losses.append(loss)
+        losses.append(weight * loss)
 
     return torch.sum(torch.stack(losses, dim=1), dim=1)
